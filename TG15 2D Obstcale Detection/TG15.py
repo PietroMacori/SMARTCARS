@@ -35,10 +35,11 @@ class TG15(Laser):
         self.labels = {}     # Dictionary {block_idx: class_label}    
         # circle (person): 0, line (forward vehicle and barriers): 1, rectangle (other vehicles and buildings): 2
 
-        self.num_points = 0  # Enumerate to count the points
+        self.num_points = 0  # The total number of points detected
+        self.num_blocks = 0  # The total number of blocks detected
 
 
-    def animate(self, i, lidar_polar):
+    def animate_raw(self, i, lidar_polar):
         r = self.doProcessSimple(self.scan)
         if r:
             angle = []
@@ -51,6 +52,9 @@ class TG15(Laser):
             lidar_polar.clear()
             lidar_polar.scatter(angle, ran, c=intensity, cmap='hsv', alpha=0.95)
 
+    def animate_classified(self, i, lidar_polar):
+        pass
+
     def plot_raw_perception(self):
         fig = plt.figure()
         fig.canvas.set_window_title('TG15 LIDAR Monitor')
@@ -62,7 +66,7 @@ class TG15(Laser):
         if ret:
             ret = self.turnOn()
             if ret:
-                animation.FuncAnimation(fig, self.animate, interval=50, fargs=(lidar_polar,))
+                animation.FuncAnimation(fig, self.animate_raw, interval=50, fargs=(lidar_polar,))
                 plt.show()
             self.turnOff()
         self.disconnecting()
@@ -75,9 +79,15 @@ class TG15(Laser):
             self.num_points += 1
 
     def create_blocks(self):
-        pass
+        #self.blocks[0] = 
+        for _, point in self.points:
+            pass
+            
 
     def classify(self):
+        pass
+
+    def plot_classified_perception(self):
         pass
 
     def run(self):
@@ -89,6 +99,9 @@ class TG15(Laser):
             print('Scanning...')
             while r:
                 self.read_pre_process()
+                self.create_blocks()
+                self.classify()
+                print(self.labels)
             print('Scan interrupted! Attempting to restart...')
             self.turnOff()
         print('Lidar disconnected!')
