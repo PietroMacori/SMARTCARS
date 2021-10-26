@@ -4,18 +4,20 @@ from ydlidar import CYdLidar as Laser
 import ydlidar
 from collections import defaultdict
 import numpy as np
-
+import matplotlib.patches as mpatches
 import numpy as np
 from scipy.spatial import ConvexHull
 import time
 
 class TG15(Laser):
-    def __init__(self, clustering_max_dist=1.5):
+    def __init__(self, clustering_max_dist=1.5, circle_thresh=5, rect_thresh=0.2):
         
         # Max and min scan range
         self.RMAX = 15
         self.RMIN = 0.05
         self.clustering_max_dist = clustering_max_dist
+        self.circle_thresh = circle_thresh
+        self.rect_thresh = rect_thresh
 
         ports = ydlidar.lidarPortList()
         self.port = "/dev/ydlidar"
@@ -42,7 +44,9 @@ class TG15(Laser):
         self.labels = {}     # Dictionary {block_idx: class_label}    
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
         # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
-
+        self.angle = []
+        self.ran = [] 
+        self.intensity = []
         self.num_points = 0  # The total number of points detected
         self.num_blocks = 0  # The total number of blocks detected
 
@@ -57,10 +61,9 @@ class TG15(Laser):
                 angle.append(point.angle)
                 ran.append(point.range)
                 intensity.append(point.intensity)
-            
+            lidar_polar.clear()
+            lidar_polar.scatter(angle, ran, c=intensity, cmap='hsv', alpha=0.95)
 
-    def animate_classified(self, i, lidar_polar):
-        pass
 
     def plot_raw_perception(self):
         fig = plt.figure()
@@ -83,6 +86,9 @@ class TG15(Laser):
         self.reset()
         for point in self.scan.points:
             self.points[self.num_points] = (point.angle, point.range ,point.intensity)
+            self.angle.append(point.angle)
+            self.ran.append(point.range)
+            self.intensity.append(point.intensity)
             self.num_points += 1
 
     def polar_dist(self, pi, pj):
@@ -102,7 +108,7 @@ class TG15(Laser):
         Returns a set of points representing the corners of the bounding box.
 
         :param points: an nx2 matrix of coordinates
-        :rval: an nx2 matrix of coordinates
+        :rval: an 4x2 matrix of coordinates
         """
         from scipy.ndimage.interpolation import rotate
         pi2 = np.pi/2.
@@ -163,14 +169,14 @@ class TG15(Laser):
         return rval
 
     def merge_point_block(self, ip, ib):
-        max_dist = -1
+        min_dist = np.inf
         for ind in self.blocks[ib]:
             dist = self.polar_dist(ip, ind)
-            if  dist > max_dist:
-                max_dist = dist
-        if max_dist <= self.clustering_max_dist:
-            return True
-        return False              
+            if  dist < min_dist:
+                min_dist = dist
+        if min_dist >= self.clustering_max_dist:
+            return False
+        return True              
 
     def create_blocks(self):
         for i in range(self.num_points):
@@ -201,7 +207,7 @@ class TG15(Laser):
                 radius = d
         return 0, center, radius
 
-    def clacl_line_rect(self, bi):
+    def calc_line_rect(self, bi):
         max_dist = 0.0
         p1_line = None
         p2_line = None
@@ -226,7 +232,6 @@ class TG15(Laser):
         is_rect = False
         X = []
         Y = []
-        bl = self.blocks[bi]
         for i in range(len(bl)):
             r = self.points[bl[i]][1]
             a = self.points[bl[i]][0]
@@ -237,7 +242,7 @@ class TG15(Laser):
             p3 = np.array([x,y])
             d = np.abs(np.norm(np.cross(p2-p1, p1-p3)))/np.norm(p2-p1)
             dists.append(d)
-            if d>=0.2*max_dist:
+            if d>=self.rect_thresh*max_dist:
                 is_rect = True
     
         if is_rect == False:
@@ -253,49 +258,60 @@ class TG15(Laser):
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
         # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
         for i in range(self.num_blocks):
-            if len(self.blocks[i]) <= 5:
+            if len(self.blocks[i]) <= self.circle_thresh:
                 center, r = self.calc_circle(i)
                 self.labels[i] = (0, center, r)
             else:
                 label, coords = self.calc_line_rect(i)
                 self.labels[i] = (label, coords)
 
-    def plot_classified_perception(self, fig, lidar_polar):
-        ret = self.initialize()
-        if ret:
-            ret = self.turnOn()
-            if ret:
-                animation.FuncAnimation(fig, self.animate_raw, interval=50, fargs=(lidar_polar,))
-                plt.show()
-            self.turnOff()
-        self.disconnecting()
+    def plot_classified_perception(self, i, fig, lidar_polar):
+        r = self.doProcessSimple(self.scan)
+        print('Scanning...')
+        print('Initializing GUI...')
+
+        self.read_pre_process()
+        self.create_blocks()
+        self.classify()
+
+        ### plotting
+        lidar_polar.clear()
+        lidar_polar.scatter(self.angle, self.ran, c=self.intensity, cmap='hsv', alpha=0.95)
+        for i in range(self.num_blocks):
+            ## circle
+            if self.labels[i][0] == 0:
+                x = self.labels[i][1][0]
+                y = self.labels[i][1][1]
+                r = self.labels[i][2]
+                theta = np.arctan(y/x)
+                lidar_polar.scatter([theta], [r], c='r', s=np.pi*r**2, cmap='hsv', alpha=0.2)
+            ## line
+            # elif self.labels[i][0] == 1:
+            #     ax.plot(x_values, y_values, color='r')
+            # ## rectangle
+            # else:
+
         plt.close()
 
     def run(self):
+
+        fig = plt.figure()
+        fig.canvas.set_window_title('TG15 LIDAR Monitor')
+        lidar_polar = plt.subplot(polar=True)
+        lidar_polar.autoscale_view(True,True,True)
+        lidar_polar.set_rmax(self.RMAX)
+        lidar_polar.grid(True)
+
         ret = self.initialize()
         print('Lidar initialized!')
-        while ret:
-            ret = self.turnOn()
-            r = self.doProcessSimple(self.scan)
-            print('Scanning...')
-            print('Initializing GUI...')
-            fig = plt.figure()
-            fig.canvas.set_window_title('TG15 LIDAR Monitor')
-            lidar_polar = plt.subplot(polar=True)
-            lidar_polar.autoscale_view(True,True,True)
-            lidar_polar.set_rmax(self.RMAX)
-            lidar_polar.grid(True)
-            while r:
-                self.read_pre_process()
-                self.create_blocks()
-                self.classify()
+        if ret:
+            r = self.turnOn()
 
-                ### Plotting
-                #time.sleep(1.0)
-                # lidar_polar.clear()
-                # lidar_polar.scatter(angle, ran, c=intensity, cmap='hsv', alpha=0.95)
-                
-            print('Scan interrupted! Attempting to restart...')
+            if r:
+                ani = animation.FuncAnimation(fig, self.plot_classified_perception, interval=50, fargs=(fig, lidar_polar,))
+                plt.show()
+
+            print('Scan interrupted!')
             self.turnOff()
         print('Lidar disconnected!')
         self.disconnecting()
