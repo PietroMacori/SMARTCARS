@@ -3,7 +3,7 @@ from collections import defaultdict
 # import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
-import ydlidar
+#import ydlidar
 from scipy.spatial import ConvexHull
 
 
@@ -12,7 +12,7 @@ def cartesian_dist(p1, p2):
 
 
 class TG15:
-    def __init__(self, clustering_max_dist=1.5, circle_thresh=500, rect_thresh=0.2):
+    def __init__(self, lidar_online=True, clustering_max_dist=1.5, circle_thresh=500, rect_thresh=0.2, file_name=None):
 
         # Max and min scan range
         self.RMAX = 15
@@ -22,25 +22,35 @@ class TG15:
         self.rect_thresh = rect_thresh
 
         self.labels = {}
+        self.lidar_online = lidar_online
+        self.num_scans = -1
 
-        ports = ydlidar.lidarPortList()
-        port = "/dev/ydlidar"
-        for key, value in ports.items():
-            port = value
+        if self.lidar_online:
+            ports = ydlidar.lidarPortList()
+            port = "/dev/ydlidar"
+            for key, value in ports.items():
+                port = value
 
-        self.laser = ydlidar.CYdLidar()
-        self.laser.setlidaropt(ydlidar.LidarPropSerialPort, port)
-        self.laser.setlidaropt(ydlidar.LidarPropSerialBaudrate, 512000)
-        self.laser.setlidaropt(ydlidar.LidarPropLidarType, ydlidar.TYPE_TOF)
-        self.laser.setlidaropt(ydlidar.LidarPropDeviceType, ydlidar.YDLIDAR_TYPE_SERIAL)
-        self.laser.setlidaropt(ydlidar.LidarPropScanFrequency, 10.0)
-        self.laser.setlidaropt(ydlidar.LidarPropSampleRate, 20)
-        self.laser.setlidaropt(ydlidar.LidarPropSingleChannel, False)
-        self.laser.setlidaropt(ydlidar.LidarPropMaxAngle, 180.0)
-        self.laser.setlidaropt(ydlidar.LidarPropMinAngle, -180.0)
-        self.laser.setlidaropt(ydlidar.LidarPropMaxRange, 32.0)
-        self.laser.setlidaropt(ydlidar.LidarPropMinRange, 0.01)
-        self.scan = ydlidar.LaserScan()
+            self.laser = ydlidar.CYdLidar()
+            self.laser.setlidaropt(ydlidar.LidarPropSerialPort, port)
+            self.laser.setlidaropt(ydlidar.LidarPropSerialBaudrate, 512000)
+            self.laser.setlidaropt(ydlidar.LidarPropLidarType, ydlidar.TYPE_TOF)
+            self.laser.setlidaropt(ydlidar.LidarPropDeviceType, ydlidar.YDLIDAR_TYPE_SERIAL)
+            self.laser.setlidaropt(ydlidar.LidarPropScanFrequency, 10.0)
+            self.laser.setlidaropt(ydlidar.LidarPropSampleRate, 20)
+            self.laser.setlidaropt(ydlidar.LidarPropSingleChannel, False)
+            self.laser.setlidaropt(ydlidar.LidarPropMaxAngle, 180.0)
+            self.laser.setlidaropt(ydlidar.LidarPropMinAngle, -180.0)
+            self.laser.setlidaropt(ydlidar.LidarPropMaxRange, 32.0)
+            self.laser.setlidaropt(ydlidar.LidarPropMinRange, 0.01)
+            self.scan = ydlidar.LaserScan()
+        else:
+            self.file_name = file_name
+            import pickle
+            file = open(self.file_name, 'rb')
+            self.data = pickle.load(file)
+            file.close()
+
         self.reset()
 
     def reset(self):
@@ -52,19 +62,34 @@ class TG15:
         self.angle = []
         self.ran = []
         self.intensity = []
+        self.X = []
+        self.Y = []
         self.num_points = 0  # The total number of points detected
         self.num_blocks = 0  # The total number of blocks detected
+        self.num_scans += 1
 
     def read_pre_process(self):
         self.reset()
-        r = self.laser.doProcessSimple(self.scan)
-        if r:
-            for point in self.scan.points:
-                self.points[self.num_points] = (point.angle, point.range, point.intensity)
-                self.angle.append(point.angle)
-                self.ran.append(point.range)
-                self.intensity.append(point.intensity)
+        if self.lidar_online:
+            r = self.laser.doProcessSimple(self.scan)
+            if r:
+                for point in self.scan.points:
+                    self.points[self.num_points] = (point.angle, point.range, point.intensity)
+                    self.angle.append(point.angle)
+                    self.ran.append(point.range)
+                    self.intensity.append(point.intensity)
+                    self.num_points += 1
+        else:
+            self.current_data = self.data[self.num_scans]
+            for point in self.current_data:
+                self.points[self.num_points] = (point[0], point[1], 10)
+                self.X.append(np.cos(point[0])*point[1])
+                self.Y.append(np.sin(point[0])*point[1])
+                self.angle.append(point[0])
+                self.ran.append(point[1])
+                self.intensity.append(10)
                 self.num_points += 1
+
 
     def polar_dist(self, pi, pj):
         r1 = self.points[pi][1]
@@ -189,9 +214,6 @@ class TG15:
                     max_dist = d
                     p1_line = i
                     p2_line = j
-        print("----------")
-        print(p1_line)
-        print(self.points[p1_line])
         r1_line = self.points[p1_line][1]
         a1_line = self.points[p1_line][0]
         r2_line = self.points[p2_line][1]
@@ -212,7 +234,7 @@ class TG15:
             X.append(x)
             Y.append(y)
             p3 = np.array([x, y])
-            d = np.abs(np.norm(np.cross(p2 - p1, p1 - p3))) / np.norm(p2 - p1)
+            d = np.abs(np.linalg.norm(np.cross(p2 - p1, p1 - p3))) / np.linalg.norm(p2 - p1)
             dists.append(d)
             if d >= self.rect_thresh * max_dist:
                 is_rect = True
@@ -229,7 +251,6 @@ class TG15:
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
         # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
         for i in range(self.num_blocks):
-            print(len(self.blocks[i]))
             if len(self.blocks[i]) <= self.circle_thresh:
                 center, r = self.calc_circle(i)
                 self.labels[i] = (0, center, r)
@@ -256,13 +277,14 @@ class TG15:
                 y = self.labels[i][1][1]
                 r = self.labels[i][2]
                 theta = np.arctan(y / x)
-                lidar_polar.scatter([theta], [r], c='g', s=np.pi * r ** 2, cmap='hsv', alpha=0.2)
+                print(r, theta)
+                lidar_polar.scatter([theta], [r], c='g', s=np.pi * (10 ** 2), cmap='hsv', alpha=0.95)
             ## line
-            elif self.labels[i][0] == 1:
-                ax.plot(x_values, y_values, color='r')
-            # ## rectangle
-            else:
-                pass
+            # elif self.labels[i][0] == 1:
+            #     ax.plot(x_values, y_values, color='r')
+            # # ## rectangle
+            # else:
+            #     pass
 
     def run(self):
 
@@ -272,18 +294,25 @@ class TG15:
         lidar_polar.autoscale_view(True, True, True)
         lidar_polar.set_rmax(self.RMAX)
         lidar_polar.grid(True)
-
-        ret = self.laser.initialize()
+        if self.lidar_online:
+            ret = self.laser.initialize()
+        else:
+            ret = True
         print('Lidar initialized!')
         if ret:
-            r = self.laser.turnOn()
+            if self.lidar_online:
+                r = self.laser.turnOn()
+            else:
+                r = True
 
             if r:
                 # ani = animation.FuncAnimation(fig, self.plot_classified_perception, interval=50, fargs=lidar_polar)
                 self.plot_classified_perception(lidar_polar)
                 plt.show()
             print('Scan interrupted!')
-            self.laser.turnOff()
+            if self.lidar_online:
+                self.laser.turnOff()
         print('Lidar disconnected!')
-        self.laser.disconnecting()
+        if self.lidar_online:
+            self.laser.disconnecting()
         plt.close()
