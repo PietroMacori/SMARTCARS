@@ -1,17 +1,19 @@
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from ydlidar import CYdLidar as Laser
-import ydlidar
 from collections import defaultdict
-import numpy as np
-import matplotlib.patches as mpatches
-import numpy as np
-from scipy.spatial import ConvexHull
-import time
 
-class TG15(Laser):
-    def __init__(self, clustering_max_dist=1.5, circle_thresh=5, rect_thresh=0.2):
-        
+# import matplotlib.animation as animation
+import matplotlib.pyplot as plt
+import numpy as np
+import ydlidar
+from scipy.spatial import ConvexHull
+
+
+def cartesian_dist(p1, p2):
+    return np.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+
+
+class TG15:
+    def __init__(self, clustering_max_dist=1.5, circle_thresh=500, rect_thresh=0.2):
+
         # Max and min scan range
         self.RMAX = 15
         self.RMIN = 0.05
@@ -19,89 +21,58 @@ class TG15(Laser):
         self.circle_thresh = circle_thresh
         self.rect_thresh = rect_thresh
 
-        ports = ydlidar.lidarPortList()
-        self.port = "/dev/ydlidar"
-        for _, value in ports.items():
-            self.port = value
+        self.labels = {}
 
-        self.setlidaropt(ydlidar.LidarPropSerialPort, self.port)
-        self.setlidaropt(ydlidar.LidarPropSerialBaudrate, 512000)
-        self.setlidaropt(ydlidar.LidarPropLidarType, ydlidar.TYPE_TOF)
-        self.setlidaropt(ydlidar.LidarPropDeviceType, ydlidar.YDLIDAR_TYPE_SERIAL)
-        self.setlidaropt(ydlidar.LidarPropScanFrequency, 10.0)
-        self.setlidaropt(ydlidar.LidarPropSampleRate, 20)
-        self.setlidaropt(ydlidar.LidarPropSingleChannel, False)
-        self.setlidaropt(ydlidar.LidarPropMaxAngle, 180.0)
-        self.setlidaropt(ydlidar.LidarPropMinAngle, -180.0)
-        self.setlidaropt(ydlidar.LidarPropMaxRange, self.RMAX)
-        self.setlidaropt(ydlidar.LidarPropMinRange, self.RMIN)
-        
+        ports = ydlidar.lidarPortList()
+        port = "/dev/ydlidar"
+        for key, value in ports.items():
+            port = value
+
+        self.laser = ydlidar.CYdLidar()
+        self.laser.setlidaropt(ydlidar.LidarPropSerialPort, port)
+        self.laser.setlidaropt(ydlidar.LidarPropSerialBaudrate, 512000)
+        self.laser.setlidaropt(ydlidar.LidarPropLidarType, ydlidar.TYPE_TOF)
+        self.laser.setlidaropt(ydlidar.LidarPropDeviceType, ydlidar.YDLIDAR_TYPE_SERIAL)
+        self.laser.setlidaropt(ydlidar.LidarPropScanFrequency, 10.0)
+        self.laser.setlidaropt(ydlidar.LidarPropSampleRate, 20)
+        self.laser.setlidaropt(ydlidar.LidarPropSingleChannel, False)
+        self.laser.setlidaropt(ydlidar.LidarPropMaxAngle, 180.0)
+        self.laser.setlidaropt(ydlidar.LidarPropMinAngle, -180.0)
+        self.laser.setlidaropt(ydlidar.LidarPropMaxRange, 32.0)
+        self.laser.setlidaropt(ydlidar.LidarPropMinRange, 0.01)
+        self.scan = ydlidar.LaserScan()
         self.reset()
 
     def reset(self):
-        self.points = {}     # Dictionary {point_idx: (angle, range, intensity)}
-        self.blocks = defaultdict(list)     # Dictionary {block_idx: [list of point indices]}
-        self.labels = {}     # Dictionary {block_idx: class_label}    
+        self.points = {}  # Dictionary {point_idx: (angle, range, intensity)}
+        self.blocks = defaultdict(list)  # Dictionary {block_idx: [list of point indices]}
+        self.labels = {}  # Dictionary {block_idx: class_label}
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
         # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
         self.angle = []
-        self.ran = [] 
+        self.ran = []
         self.intensity = []
         self.num_points = 0  # The total number of points detected
         self.num_blocks = 0  # The total number of blocks detected
 
-
-    def animate_raw(self, i, lidar_polar):
-        r = self.doProcessSimple(self.scan)
-        if r:
-            angle = []
-            ran = []
-            intensity = []
-            for point in self.scan.points:
-                angle.append(point.angle)
-                ran.append(point.range)
-                intensity.append(point.intensity)
-            lidar_polar.clear()
-            lidar_polar.scatter(angle, ran, c=intensity, cmap='hsv', alpha=0.95)
-
-
-    def plot_raw_perception(self):
-        fig = plt.figure()
-        fig.canvas.set_window_title('TG15 LIDAR Monitor')
-        lidar_polar = plt.subplot(polar=True)
-        lidar_polar.autoscale_view(True,True,True)
-        lidar_polar.set_rmax(self.RMAX)
-        lidar_polar.grid(True)
-        ret = self.initialize()
-        if ret:
-            ret = self.turnOn()
-            if ret:
-                animation.FuncAnimation(fig, self.animate_raw, interval=50, fargs=(lidar_polar,))
-                plt.show()
-            self.turnOff()
-        self.disconnecting()
-        plt.close()
-
     def read_pre_process(self):
         self.reset()
-        for point in self.scan.points:
-            self.points[self.num_points] = (point.angle, point.range ,point.intensity)
-            self.angle.append(point.angle)
-            self.ran.append(point.range)
-            self.intensity.append(point.intensity)
-            self.num_points += 1
+        r = self.laser.doProcessSimple(self.scan)
+        if r:
+            for point in self.scan.points:
+                self.points[self.num_points] = (point.angle, point.range, point.intensity)
+                self.angle.append(point.angle)
+                self.ran.append(point.range)
+                self.intensity.append(point.intensity)
+                self.num_points += 1
 
     def polar_dist(self, pi, pj):
         r1 = self.points[pi][1]
         r2 = self.points[pj][1]
         a1 = self.points[pi][0]
         a2 = self.points[pj][0]
-        return np.sqrt(r1**2+r2**2-r1*r2*np.cos(a2-a1))
+        return np.sqrt(r1 ** 2 + r2 ** 2 - 2 * r1 * r2 * np.cos(a2 - a1))
 
-    def cartesian_dist(self, p1, p2):
-        return np.sqrt((p1[0]-p2[0])**2+(p1[1]-p2[1])**2)
-
-    
     def minimum_bounding_rectangle(self, points):
         """
         Find the smallest bounding rectangle for a set of points.
@@ -110,14 +81,13 @@ class TG15(Laser):
         :param points: an nx2 matrix of coordinates
         :rval: an 4x2 matrix of coordinates
         """
-        from scipy.ndimage.interpolation import rotate
-        pi2 = np.pi/2.
+        pi2: float = np.pi / 2.
 
         # get the convex hull for the points
         hull_points = points[ConvexHull(points).vertices]
 
         # calculate edge angles
-        edges = np.zeros((len(hull_points)-1, 2))
+        edges = np.zeros((len(hull_points) - 1, 2))
         edges = hull_points[1:] - hull_points[:-1]
 
         angles = np.zeros((len(edges)))
@@ -130,8 +100,8 @@ class TG15(Laser):
         # XXX both work
         rotations = np.vstack([
             np.cos(angles),
-            np.cos(angles-pi2),
-            np.cos(angles+pi2),
+            np.cos(angles - pi2),
+            np.cos(angles + pi2),
             np.cos(angles)]).T
         #     rotations = np.vstack([
         #         np.cos(angles),
@@ -172,11 +142,11 @@ class TG15(Laser):
         min_dist = np.inf
         for ind in self.blocks[ib]:
             dist = self.polar_dist(ip, ind)
-            if  dist < min_dist:
+            if dist < min_dist:
                 min_dist = dist
         if min_dist >= self.clustering_max_dist:
             return False
-        return True              
+        return True
 
     def create_blocks(self):
         for i in range(self.num_points):
@@ -197,35 +167,37 @@ class TG15(Laser):
         for i in range(len(bl)):
             r = self.points[bl[i]][1]
             a = self.points[bl[i]][0]
-            X.append(r*np.cos(a))
-            Y.append(r*np.sin(a))
+            X.append(r * np.cos(a))
+            Y.append(r * np.sin(a))
         center = [np.mean(X), np.mean(Y)]
         radius = 0.0
         for i in range(len(bl)):
-            d = self.cartesian_dist([X[i], Y[i]], center)
+            d = cartesian_dist([X[i], Y[i]], center)
             if d > radius:
                 radius = d
-        return 0, center, radius
+        return center, radius
 
     def calc_line_rect(self, bi):
         max_dist = 0.0
         p1_line = None
         p2_line = None
         bl = self.blocks[bi]
-        for i in range(len(bl)-1):
-            for j in range(i+1, len(bl)):
+        for i in range(len(bl) - 1):
+            for j in range(i + 1, len(bl)):
                 d = self.polar_dist(bl[i], bl[j])
                 if d > max_dist:
                     max_dist = d
                     p1_line = i
                     p2_line = j
-
+        print("----------")
+        print(p1_line)
+        print(self.points[p1_line])
         r1_line = self.points[p1_line][1]
         a1_line = self.points[p1_line][0]
         r2_line = self.points[p2_line][1]
         a2_line = self.points[p2_line][0]
-        p1 = np.array([r1_line*np.cos(a1_line), r1_line*np.sin(a1_line)])
-        p2 = np.array([r2_line*np.cos(a2_line), r2_line*np.sin(a2_line)])
+        p1 = np.array([r1_line * np.cos(a1_line), r1_line * np.sin(a1_line)])
+        p2 = np.array([r2_line * np.cos(a2_line), r2_line * np.sin(a2_line)])
 
         coords = []
         dists = []
@@ -235,29 +207,29 @@ class TG15(Laser):
         for i in range(len(bl)):
             r = self.points[bl[i]][1]
             a = self.points[bl[i]][0]
-            x = r*np.cos(a)
-            y = r*np.sin(a)
+            x = r * np.cos(a)
+            y = r * np.sin(a)
             X.append(x)
             Y.append(y)
-            p3 = np.array([x,y])
-            d = np.abs(np.norm(np.cross(p2-p1, p1-p3)))/np.norm(p2-p1)
+            p3 = np.array([x, y])
+            d = np.abs(np.norm(np.cross(p2 - p1, p1 - p3))) / np.norm(p2 - p1)
             dists.append(d)
-            if d>=self.rect_thresh*max_dist:
+            if d >= self.rect_thresh * max_dist:
                 is_rect = True
-    
-        if is_rect == False:
+
+        if not is_rect:
             coords = [(p1[0], p1[1]), (p2[0], p2[1])]
             return 1, coords
 
         points = np.array([X, Y]).T
         coords = self.minimum_bounding_rectangle(points)
         return 2, coords
-        
 
     def classify(self):
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
         # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
         for i in range(self.num_blocks):
+            print(len(self.blocks[i]))
             if len(self.blocks[i]) <= self.circle_thresh:
                 center, r = self.calc_circle(i)
                 self.labels[i] = (0, center, r)
@@ -265,8 +237,8 @@ class TG15(Laser):
                 label, coords = self.calc_line_rect(i)
                 self.labels[i] = (label, coords)
 
-    def plot_classified_perception(self, i, fig, lidar_polar):
-        r = self.doProcessSimple(self.scan)
+    def plot_classified_perception(self, lidar_polar):
+
         print('Scanning...')
         print('Initializing GUI...')
 
@@ -279,39 +251,39 @@ class TG15(Laser):
         lidar_polar.scatter(self.angle, self.ran, c=self.intensity, cmap='hsv', alpha=0.95)
         for i in range(self.num_blocks):
             ## circle
-            if self.labels[i][0] == 0:
+            if i in self.labels.keys() and self.labels[i][0] == 0:
                 x = self.labels[i][1][0]
                 y = self.labels[i][1][1]
                 r = self.labels[i][2]
-                theta = np.arctan(y/x)
-                lidar_polar.scatter([theta], [r], c='r', s=np.pi*r**2, cmap='hsv', alpha=0.2)
+                theta = np.arctan(y / x)
+                lidar_polar.scatter([theta], [r], c='g', s=np.pi * r ** 2, cmap='hsv', alpha=0.2)
             ## line
-            # elif self.labels[i][0] == 1:
-            #     ax.plot(x_values, y_values, color='r')
+            elif self.labels[i][0] == 1:
+                ax.plot(x_values, y_values, color='r')
             # ## rectangle
-            # else:
-
-        plt.close()
+            else:
+                pass
 
     def run(self):
 
         fig = plt.figure()
-        fig.canvas.set_window_title('TG15 LIDAR Monitor')
+        # fig.canvas.set_window_title('TG15 LIDAR Monitor')
         lidar_polar = plt.subplot(polar=True)
-        lidar_polar.autoscale_view(True,True,True)
+        lidar_polar.autoscale_view(True, True, True)
         lidar_polar.set_rmax(self.RMAX)
         lidar_polar.grid(True)
 
-        ret = self.initialize()
+        ret = self.laser.initialize()
         print('Lidar initialized!')
         if ret:
-            r = self.turnOn()
+            r = self.laser.turnOn()
 
             if r:
-                ani = animation.FuncAnimation(fig, self.plot_classified_perception, interval=50, fargs=(fig, lidar_polar,))
+                # ani = animation.FuncAnimation(fig, self.plot_classified_perception, interval=50, fargs=lidar_polar)
+                self.plot_classified_perception(lidar_polar)
                 plt.show()
-
             print('Scan interrupted!')
-            self.turnOff()
+            self.laser.turnOff()
         print('Lidar disconnected!')
-        self.disconnecting()
+        self.laser.disconnecting()
+        plt.close()
