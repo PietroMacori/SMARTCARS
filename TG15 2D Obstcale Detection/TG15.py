@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 #import ydlidar
 from scipy.spatial import ConvexHull
+import matplotlib.animation as animation
 
 
 def cartesian_dist(p1, p2):
@@ -260,6 +261,25 @@ class TG15:
                 label, coords = self.calc_line_rect(i)
                 self.labels[i] = (label, coords)
 
+    def plot_raw_perception(self, lidar_polar):
+        print('Scanning...')
+        print('Initializing GUI...')
+        r = self.laser.doProcessSimple(self.scan)
+        if r:
+            angle = []
+            ran = []
+            intensity = []
+            for point in self.scan.points:
+                angle.append(point.angle)
+                ran.append(point.range)
+                intensity.append(point.intensity)
+                
+            ### plotting
+            lidar_polar.clear()
+            lidar_polar.scatter(angle, ran, c=intensity, cmap='hsv', alpha=0.95)
+
+
+
     def plot_classified_perception(self, lidar_polar):
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
         # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
@@ -310,8 +330,12 @@ class TG15:
                 r = True
 
             if r:
-                # ani = animation.FuncAnimation(fig, self.plot_classified_perception, interval=50, fargs=lidar_polar)
-                self.plot_classified_perception(lidar_polar)
+                if self.to_classify:
+                    #ani = animation.FuncAnimation(fig, self.plot_classified_perception, interval=50, fargs=(lidar_polar,))
+                    self.plot_classified_perception(lidar_polar)
+                else:
+                    ani = animation.FuncAnimation(fig, self.plot_raw_perception, interval=50, fargs=(lidar_polar,))
+                    #self.plot_raw_inputs(lidar_polar)
                 plt.show()
             print('Scan interrupted!')
             if self.lidar_online:
