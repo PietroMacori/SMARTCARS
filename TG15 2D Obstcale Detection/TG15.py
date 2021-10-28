@@ -12,7 +12,7 @@ def cartesian_dist(p1, p2):
 
 
 class TG15:
-    def __init__(self, lidar_online=True, clustering_max_dist=1.5, circle_thresh=500, rect_thresh=0.2, file_name=None):
+    def __init__(self, lidar_online=True, to_classify=True, clustering_max_dist=1.5, circle_thresh=500, rect_thresh=0.2, file_name=None):
 
         # Max and min scan range
         self.RMAX = 15
@@ -23,6 +23,7 @@ class TG15:
 
         self.labels = {}
         self.lidar_online = lidar_online
+        self.to_classify = to_classify
         self.num_scans = -1
 
         if self.lidar_online:
@@ -214,6 +215,7 @@ class TG15:
                     max_dist = d
                     p1_line = i
                     p2_line = j
+
         r1_line = self.points[p1_line][1]
         a1_line = self.points[p1_line][0]
         r2_line = self.points[p2_line][1]
@@ -259,7 +261,8 @@ class TG15:
                 self.labels[i] = (label, coords)
 
     def plot_classified_perception(self, lidar_polar):
-
+        # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
+        # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
         print('Scanning...')
         print('Initializing GUI...')
 
@@ -269,16 +272,17 @@ class TG15:
 
         ### plotting
         lidar_polar.clear()
-        lidar_polar.scatter(self.angle, self.ran, c=self.intensity, cmap='hsv', alpha=0.95)
+        lidar_polar.scatter(self.angle, self.ran, cmap='hsv', alpha=0.95)
         for i in range(self.num_blocks):
             ## circle
             if i in self.labels.keys() and self.labels[i][0] == 0:
                 x = self.labels[i][1][0]
                 y = self.labels[i][1][1]
                 r = self.labels[i][2]
-                theta = np.arctan(y / x)
-                print(r, theta)
-                lidar_polar.scatter([theta], [r], c='g', s=np.pi * (10 ** 2), cmap='hsv', alpha=0.95)
+                ran = np.sqrt(x**2+y**2)
+                theta = np.arctan(y/x)
+                print(r, theta, x, y)
+                lidar_polar.scatter([theta], [ran], c='g', s=np.pi * (r ** 2), cmap='hsv', alpha=0.25)
             ## line
             # elif self.labels[i][0] == 1:
             #     ax.plot(x_values, y_values, color='r')
@@ -289,7 +293,7 @@ class TG15:
     def run(self):
 
         fig = plt.figure()
-        # fig.canvas.set_window_title('TG15 LIDAR Monitor')
+        fig.canvas.set_window_title('TG15 LIDAR Monitor')
         lidar_polar = plt.subplot(polar=True)
         lidar_polar.autoscale_view(True, True, True)
         lidar_polar.set_rmax(self.RMAX)
