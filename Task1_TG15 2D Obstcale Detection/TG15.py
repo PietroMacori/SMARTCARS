@@ -1,9 +1,10 @@
+import math
 from collections import defaultdict
 
 # import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
-#import ydlidar
+# import ydlidar
 from scipy.spatial import ConvexHull
 import matplotlib.animation as animation
 
@@ -13,7 +14,8 @@ def cartesian_dist(p1, p2):
 
 
 class TG15:
-    def __init__(self, lidar_online=True, to_classify=True, clustering_max_dist=1.5, circle_thresh=500, rect_thresh=0.2, file_name=None):
+    def __init__(self, lidar_online=True, to_classify=True, clustering_max_dist=0.1, circle_thresh=20, rect_thresh=0.2,
+                 file_name=None):
 
         # Max and min scan range
         self.RMAX = 15
@@ -85,13 +87,12 @@ class TG15:
             self.current_data = self.data[self.num_scans]
             for point in self.current_data:
                 self.points[self.num_points] = (point[0], point[1], 10)
-                self.X.append(np.cos(point[0])*point[1])
-                self.Y.append(np.sin(point[0])*point[1])
-                self.angle.append(point[0])
-                self.ran.append(point[1])
+                self.X.append(np.cos(point[0]) * point[1])
+                self.Y.append(np.sin(point[0]) * point[1])
+                self.angle.append(point[1])
+                self.ran.append(point[0])
                 self.intensity.append(10)
                 self.num_points += 1
-
 
     def polar_dist(self, pi, pj):
         r1 = self.points[pi][1]
@@ -177,7 +178,10 @@ class TG15:
 
     def create_blocks(self):
         for i in range(self.num_points):
+            if self.ran[i] < 0.10:
+                continue
             need_new_block = True
+
             for j in range(self.num_blocks):
                 if self.merge_point_block(i, j):
                     self.blocks[j].append(i)
@@ -192,10 +196,12 @@ class TG15:
         Y = []
         bl = self.blocks[bi]
         for i in range(len(bl)):
-            r = self.points[bl[i]][1]
-            a = self.points[bl[i]][0]
-            X.append(r * np.cos(a))
-            Y.append(r * np.sin(a))
+            r = self.points[bl[i]][0]
+            a = self.points[bl[i]][1]
+
+            X.append(round(r * np.cos(a), 5))
+            Y.append(round(r * np.sin(a), 5))
+
         center = [np.mean(X), np.mean(Y)]
         radius = 0.0
         for i in range(len(bl)):
@@ -209,18 +215,20 @@ class TG15:
         p1_line = None
         p2_line = None
         bl = self.blocks[bi]
-        for i in range(len(bl) - 1):
-            for j in range(i + 1, len(bl)):
+        for i in range(len(bl)):
+            for j in range(len(bl)):
                 d = self.polar_dist(bl[i], bl[j])
                 if d > max_dist:
                     max_dist = d
                     p1_line = i
                     p2_line = j
 
-        r1_line = self.points[p1_line][1]
-        a1_line = self.points[p1_line][0]
-        r2_line = self.points[p2_line][1]
-        a2_line = self.points[p2_line][0]
+        r1_line = self.ran[self.blocks[bi][p1_line]]
+        a1_line = self.angle[self.blocks[bi][p1_line]]
+        r2_line = self.ran[self.blocks[bi][p2_line]]
+        a2_line = self.angle[self.blocks[bi][p2_line]]
+        return [r1_line, r2_line], [a1_line, a2_line]
+        '''
         p1 = np.array([r1_line * np.cos(a1_line), r1_line * np.sin(a1_line)])
         p2 = np.array([r2_line * np.cos(a2_line), r2_line * np.sin(a2_line)])
 
@@ -240,7 +248,7 @@ class TG15:
             d = np.abs(np.linalg.norm(np.cross(p2 - p1, p1 - p3))) / np.linalg.norm(p2 - p1)
             dists.append(d)
             if d >= self.rect_thresh * max_dist:
-                is_rect = True
+                is_rect = False
 
         if not is_rect:
             coords = [(p1[0], p1[1]), (p2[0], p2[1])]
@@ -248,7 +256,7 @@ class TG15:
 
         points = np.array([X, Y]).T
         coords = self.minimum_bounding_rectangle(points)
-        return 2, coords
+        return 2, coords'''
 
     def classify(self):
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
@@ -258,8 +266,8 @@ class TG15:
                 center, r = self.calc_circle(i)
                 self.labels[i] = (0, center, r)
             else:
-                label, coords = self.calc_line_rect(i)
-                self.labels[i] = (label, coords)
+                r, t = self.calc_line_rect(i)
+                self.labels[i] = (1, r, t)
 
     def plot_raw_perception(self, lidar_polar):
         print('Scanning...')
@@ -273,47 +281,64 @@ class TG15:
                 angle.append(point.angle)
                 ran.append(point.range)
                 intensity.append(point.intensity)
-                
+
             ### plotting
             lidar_polar.clear()
             lidar_polar.scatter(angle, ran, c=intensity, cmap='hsv', alpha=0.95)
 
-
-
-    def plot_classified_perception(self, lidar_polar):
+    def plot_classified_perception(self, lidar_polar, fig):
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
         # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
         print('Scanning...')
         print('Initializing GUI...')
-
         self.read_pre_process()
         self.create_blocks()
         self.classify()
 
         ### plotting
         lidar_polar.clear()
-        lidar_polar.scatter(self.angle, self.ran, cmap='hsv', alpha=0.95)
+        lidar_polar.scatter(self.angle, self.ran, s=5, cmap='hsv', alpha=0.95)
+
         for i in range(self.num_blocks):
             ## circle
             if i in self.labels.keys() and self.labels[i][0] == 0:
                 x = self.labels[i][1][0]
                 y = self.labels[i][1][1]
                 r = self.labels[i][2]
-                ran = np.sqrt(x**2+y**2)
-                theta = np.arctan(y/x)
-                print(r, theta, x, y)
-                lidar_polar.scatter([theta], [ran], c='g', s=np.pi * (r ** 2), cmap='hsv', alpha=0.25)
+                ran = np.sqrt(x ** 2 + y ** 2)
+                if x != 0:
+                    theta = math.atan2(y, x)
+                else:
+                    theta = 0
+
+                if ran is not None and theta is not None:
+                    pass
+                    lidar_polar.scatter(theta, ran, s=r * 50 * 10, c='r', cmap='hsv', alpha=0.45)
             ## line
             # elif self.labels[i][0] == 1:
             #     ax.plot(x_values, y_values, color='r')
             # # ## rectangle
-            # else:
-            #     pass
+            else:
+
+                ran = self.labels[i][1]
+                theta = self.labels[i][2]
+
+                if ran is not None and theta is not None:
+                    lidar_polar.plot(theta, ran, color="orange",linewidth=3,alpha=0.50)
+
+                    '''
+                    ran.append(np.sqrt(self.labels[i][1][0][0] ** 2 + self.labels[i][1][1][0] ** 2))
+                    ran.append(np.sqrt(self.labels[i][1][0][1] ** 2 + self.labels[i][1][1][1] ** 2))
+
+                    theta1.append(math.atan2(self.labels[i][1][1][0], self.labels[i][1][0][0]))
+                    theta1.append(math.atan2(self.labels[i][1][1][1], self.labels[i][1][0][1]))
+
+                    lidar_polar.plot(theta1,ran)'''
 
     def run(self):
 
         fig = plt.figure()
-        fig.canvas.set_window_title('TG15 LIDAR Monitor')
+        # fig.canvas.set_window_title('TG15 LIDAR Monitor')
         lidar_polar = plt.subplot(polar=True)
         lidar_polar.autoscale_view(True, True, True)
         lidar_polar.set_rmax(self.RMAX)
@@ -331,11 +356,12 @@ class TG15:
 
             if r:
                 if self.to_classify:
-                    #ani = animation.FuncAnimation(fig, self.plot_classified_perception, interval=50, fargs=(lidar_polar,))
-                    self.plot_classified_perception(lidar_polar)
+                    # ani = animation.FuncAnimation(fig, self.plot_classified_perception, interval=50, fargs=(lidar_polar,))
+                    self.plot_classified_perception(lidar_polar, fig)
                 else:
-                    ani = animation.FuncAnimation(fig, self.plot_raw_perception, interval=50, fargs=(lidar_polar,))
-                    #self.plot_raw_inputs(lidar_polar)
+                    # ani = animation.FuncAnimation(fig, self.plot_raw_perception, interval=50, fargs=(lidar_polar))
+                    # self.plot_raw_inputs(lidar_polar)
+                    self.plot_classified_perception(lidar_polar, fig)
                 plt.show()
             print('Scan interrupted!')
             if self.lidar_online:
