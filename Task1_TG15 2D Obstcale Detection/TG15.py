@@ -86,103 +86,65 @@ class TG15:
         else:
             self.current_data = self.data[self.num_scans]
             for point in self.current_data:
-                self.points[self.num_points] = (point[0], point[1], 10)
-                self.X.append(np.cos(point[0]) * point[1])
-                self.Y.append(np.sin(point[0]) * point[1])
-                self.angle.append(point[1])
-                self.ran.append(point[0])
-                self.intensity.append(10)
-                self.num_points += 1
+                if point[0] >= 0.2:
+                    self.points[self.num_points] = (point[0], point[1], 10)
+                    self.X.append(np.cos(point[1]) * point[0])
+                    self.Y.append(np.sin(point[1]) * point[0])
+                    self.angle.append(point[1])
+                    self.ran.append(point[0])
+                    self.intensity.append(10)
+                    self.num_points += 1
 
     def polar_dist(self, pi, pj):
-        r1 = self.points[pi][1]
-        r2 = self.points[pj][1]
-        a1 = self.points[pi][0]
-        a2 = self.points[pj][0]
-        return np.sqrt(r1 ** 2 + r2 ** 2 - 2 * r1 * r2 * np.cos(a2 - a1))
+        r1 = self.points[pi][0]
+        r2 = self.points[pj][0]
+        a1 = self.points[pi][1]
+        a2 = self.points[pj][1]
+        d1 = np.sqrt(r1 ** 2 + r2 ** 2 - 2 * r1 * r2 * np.cos(a2 - a1))
+        return d1
 
     def minimum_bounding_rectangle(self, points):
-        """
-        Find the smallest bounding rectangle for a set of points.
-        Returns a set of points representing the corners of the bounding box.
+        r_min = np.inf
+        r_max = 0
+        a_min = np.inf
+        a_max = - np.inf
 
-        :param points: an nx2 matrix of coordinates
-        :rval: an 4x2 matrix of coordinates
-        """
-        pi2: float = np.pi / 2.
+        for i in points:
+            r = self.points[i][0]
+            a = self.points[i][1]
 
-        # get the convex hull for the points
-        hull_points = points[ConvexHull(points).vertices]
+            if r < r_min:
+                r_min = r
+            if r > r_max:
+                r_max = r
+            if a < a_min:
+                a_min = a
+            if a > a_max:
+                a_max = a
 
-        # calculate edge angles
-        edges = np.zeros((len(hull_points) - 1, 2))
-        edges = hull_points[1:] - hull_points[:-1]
-
-        angles = np.zeros((len(edges)))
-        angles = np.arctan2(edges[:, 1], edges[:, 0])
-
-        angles = np.abs(np.mod(angles, pi2))
-        angles = np.unique(angles)
-
-        # find rotation matrices
-        # XXX both work
-        rotations = np.vstack([
-            np.cos(angles),
-            np.cos(angles - pi2),
-            np.cos(angles + pi2),
-            np.cos(angles)]).T
-        #     rotations = np.vstack([
-        #         np.cos(angles),
-        #         -np.sin(angles),
-        #         np.sin(angles),
-        #         np.cos(angles)]).T
-        rotations = rotations.reshape((-1, 2, 2))
-
-        # apply rotations to the hull
-        rot_points = np.dot(rotations, hull_points.T)
-
-        # find the bounding points
-        min_x = np.nanmin(rot_points[:, 0], axis=1)
-        max_x = np.nanmax(rot_points[:, 0], axis=1)
-        min_y = np.nanmin(rot_points[:, 1], axis=1)
-        max_y = np.nanmax(rot_points[:, 1], axis=1)
-
-        # find the box with the best area
-        areas = (max_x - min_x) * (max_y - min_y)
-        best_idx = np.argmin(areas)
-
-        # return the best box
-        x1 = max_x[best_idx]
-        x2 = min_x[best_idx]
-        y1 = max_y[best_idx]
-        y2 = min_y[best_idx]
-        r = rotations[best_idx]
-
-        rval = [0, 0, 0, 0]
-        rval[0] = tuple(np.dot([x1, y2], r))
-        rval[1] = tuple(np.dot([x2, y2], r))
-        rval[2] = tuple(np.dot([x2, y1], r))
-        rval[3] = tuple(np.dot([x1, y1], r))
-
-        return rval
+        return [r_min, r_max], [a_min, a_max]
 
     def merge_point_block(self, ip, ib):
         min_dist = np.inf
+        aaa = 0
         for ind in self.blocks[ib]:
+            if ip == 923 and ind == 922:
+                print("dd")
             dist = self.polar_dist(ip, ind)
             if dist < min_dist:
                 min_dist = dist
+                aaa = ind
         if min_dist >= self.clustering_max_dist:
             return False
         return True
 
     def create_blocks(self):
         for i in range(self.num_points):
-            if self.ran[i] < 0.10:
-                continue
             need_new_block = True
 
             for j in range(self.num_blocks):
+                if i == 923 and j == 46:
+                    print("d")
                 if self.merge_point_block(i, j):
                     self.blocks[j].append(i)
                     need_new_block = False
@@ -215,6 +177,7 @@ class TG15:
         p1_line = None
         p2_line = None
         bl = self.blocks[bi]
+
         for i in range(len(bl)):
             for j in range(len(bl)):
                 d = self.polar_dist(bl[i], bl[j])
@@ -227,36 +190,30 @@ class TG15:
         a1_line = self.angle[self.blocks[bi][p1_line]]
         r2_line = self.ran[self.blocks[bi][p2_line]]
         a2_line = self.angle[self.blocks[bi][p2_line]]
-        return [r1_line, r2_line], [a1_line, a2_line]
-        '''
+
         p1 = np.array([r1_line * np.cos(a1_line), r1_line * np.sin(a1_line)])
         p2 = np.array([r2_line * np.cos(a2_line), r2_line * np.sin(a2_line)])
 
-        coords = []
-        dists = []
-        is_rect = False
-        X = []
-        Y = []
+        tot_dist = np.sqrt((r2_line * np.cos(a2_line) - r1_line * np.cos(a1_line)) ** 2 + (
+                r2_line * np.sin(a2_line) - r1_line * np.sin(a1_line)) ** 2)
+        avg_dist = 0
+
         for i in range(len(bl)):
-            r = self.points[bl[i]][1]
-            a = self.points[bl[i]][0]
+            r = self.points[bl[i]][0]
+            a = self.points[bl[i]][1]
             x = r * np.cos(a)
             y = r * np.sin(a)
-            X.append(x)
-            Y.append(y)
             p3 = np.array([x, y])
             d = np.abs(np.linalg.norm(np.cross(p2 - p1, p1 - p3))) / np.linalg.norm(p2 - p1)
-            dists.append(d)
-            if d >= self.rect_thresh * max_dist:
-                is_rect = False
+            avg_dist += d
 
-        if not is_rect:
-            coords = [(p1[0], p1[1]), (p2[0], p2[1])]
-            return 1, coords
+        avg_dist = avg_dist / len(bl)
 
-        points = np.array([X, Y]).T
-        coords = self.minimum_bounding_rectangle(points)
-        return 2, coords'''
+        if avg_dist <= 0.05 * tot_dist:
+            return 1, ([r1_line, r2_line], [a1_line, a2_line])
+        else:
+            x, y = self.minimum_bounding_rectangle(bl)
+            return 2, (x, y)
 
     def classify(self):
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
@@ -266,8 +223,11 @@ class TG15:
                 center, r = self.calc_circle(i)
                 self.labels[i] = (0, center, r)
             else:
-                r, t = self.calc_line_rect(i)
-                self.labels[i] = (1, r, t)
+                rect, ret = self.calc_line_rect(i)
+                if rect == 1:
+                    self.labels[i] = (rect, ret[0], ret[1])
+                else:
+                    self.labels[i] = (rect, ret[0], ret[1])
 
     def plot_raw_perception(self, lidar_polar):
         print('Scanning...')
@@ -289,11 +249,19 @@ class TG15:
     def plot_classified_perception(self, lidar_polar, fig):
         # circle (person): (0, [x,y], r), line (forward vehicle and barriers): (1, [(x1,y1), (x2,y2)]),
         # rectangle (other vehicles and buildings): (2, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)])
+
         print('Scanning...')
         print('Initializing GUI...')
         self.read_pre_process()
         self.create_blocks()
         self.classify()
+
+        '''for b in range(len(self.blocks)):
+            print("\n\n------------- BLOCK " + str(b) + " -------------")
+            for i in self.blocks[b]:
+                print(str(i) + " \t\t" + str(self.points[i]))'''
+
+
 
         ### plotting
         lidar_polar.clear()
@@ -314,26 +282,25 @@ class TG15:
                 if ran is not None and theta is not None:
                     pass
                     lidar_polar.scatter(theta, ran, s=r * 50 * 10, c='r', cmap='hsv', alpha=0.45)
-            ## line
-            # elif self.labels[i][0] == 1:
-            #     ax.plot(x_values, y_values, color='r')
-            # # ## rectangle
-            else:
+
+            elif i in self.labels.keys() and self.labels[i][0] == 1:
 
                 ran = self.labels[i][1]
                 theta = self.labels[i][2]
 
                 if ran is not None and theta is not None:
-                    lidar_polar.plot(theta, ran, color="orange",linewidth=3,alpha=0.50)
+                    pass
+                    lidar_polar.plot(theta, ran, color="orange", linewidth=3, alpha=0.70)
+            else:
+                r_min = self.labels[i][1][0]
+                r_max = self.labels[i][1][1]
+                a_min = self.labels[i][2][0]
+                a_max = self.labels[i][2][1]
 
-                    '''
-                    ran.append(np.sqrt(self.labels[i][1][0][0] ** 2 + self.labels[i][1][1][0] ** 2))
-                    ran.append(np.sqrt(self.labels[i][1][0][1] ** 2 + self.labels[i][1][1][1] ** 2))
-
-                    theta1.append(math.atan2(self.labels[i][1][1][0], self.labels[i][1][0][0]))
-                    theta1.append(math.atan2(self.labels[i][1][1][1], self.labels[i][1][0][1]))
-
-                    lidar_polar.plot(theta1,ran)'''
+                xy = (a_min, r_min)
+                w = r_max - r_min
+                a = abs(a_max - a_min)
+                lidar_polar.add_patch(plt.Rectangle(xy, w, a, fill=False))
 
     def run(self):
 
